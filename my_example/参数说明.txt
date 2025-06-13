@@ -1,0 +1,71 @@
+data.train_batch_size 一次训练的总 batch size，多卡
+actor.ppo_mini_batch_size：  一次 actor 训练中 mini bs，单卡参数
+actor.ppo_micro_batch_size_per_gpu： actor 计算一次 loss 的单卡 micro bs。
+
+假设一共 8 张卡，train_batch_size=1024，actor.ppo_mini_batch_size=256，actor.ppo_micro_batch_size_per_gpu=4，那么
+
+- 8 张卡一次 rollout 出 1024 个样本，每张卡分到 128 个样本
+- 将 128 个样本按照 256 大小切分,只能切分为 1 份(假设有 257 个样本，那么会切分为 2 个 step，第一个 step 是 256 样本，第二个step 只有 1 个样本)，每次 step 计算 128 个样本。执行 1 次参数更新
+- 每次 step 中，一次 forward 128 个样本，考虑到一次训练可能 oom，因此再次按照 bs=actor.ppo_micro_batch_size_per_gpu=4 大小切分为 32 份，相当于执行了 32 次梯度累加后更新一次参数
+
+如果 rollout.n=5，那么全部要乘以 5
+
+- 8 张卡一次 rollout 出 5 * 1024 = 5120 个样本，每张卡分到 640 个样本
+- 将 640 个样本按照 256 大小切分,只能切分为 3 份，前两次次 step 计算 256 个样本。执行 3 次参数更新
+- 每次 step 中，一次 forward 256 个样本，考虑到一次训练可能 oom，因此再次按照 bs=actor.ppo_micro_batch_size_per_gpu=4 大小切分为 64 份，相当于执行了 64 次梯度累加后更新一次参数
+
+trainer.total_epochs=15 最外层 rollout dataloader epoch
+actor_rollout_ref.actor.ppo_epochs 内层每次 rollout 完成后总数据的训练 epoch 数
+
+
+actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu ref 模型主要是用于计算 kl, 假设每张卡需要处理 128 个样本，log_prob_micro_batch_size_per_gpu 表示每次处理多少样本。
+
+
+
+
+rollout.log_prob_micro_batch_size_per_gpu　actor　模型计算　log_prob　时候的单卡　micro bs。因为可能生成的响应很长。
+ref.log_prob_micro_batch_size_per_gpu   ref 计算　log_prob　时候的单卡　micro bs。因为可能生成的响应很长。 ref model 由于和 actor　一样，因此是 DataParallelPPOActor
+
+
+
+
+
+# 'LD_PRELOAD': '/usr/lib/x86_64-linux-gnu/libstdc++.so.6',
+
+训练数据一共 7473 条，验证集 1319,在验证时候因为用的是推理引擎，所以 Validation datasets are sent to inference engines as a whole batch 全部数据直接丢给 vllm 即可，不需要设置 batch size，好像是单卡的？
+
+
+set -x
+cd /cpfs01/shared/llm_razor/huanghaian/code/verl/
+
+export RAY_MASTER_PORT=6379
+export RAY_DASHBOARD_PORT=8265
+
+if [ "$RANK" -eq 0 ]; then
+    /cpfs01/shared/llm_razor/huanghaian/miniconda3/envs/verl/bin/ray start --head --dashboard-host=0.0.0.0 --dashboard-port=$RAY_DASHBOARD_PORT
+    sleep 30
+else
+    /cpfs01/shared/llm_razor/huanghaian/miniconda3/envs/verl/bin/ray start --address="$MASTER_ADDR:$RAY_MASTER_PORT"  --block
+fi
+sleep 30
+
+/cpfs01/shared/llm_razor/huanghaian/miniconda3/envs/verl/bin/ray status
+
+if [ "$RANK" -eq 0 ]; then
+  RAY_ADDRESS="http://127.0.0.1:$RAY_DASHBOARD_PORT" /cpfs01/shared/llm_razor/huanghaian/miniconda3/envs/verl/bin/ray job submit \
+  --working-dir . -- /cpfs01/shared/llm_razor/huanghaian/miniconda3/envs/verl/bin/python a.py
+
+/cpfs01/shared/llm_razor/huanghaian/miniconda3/envs/verl/bin/ray status
+
+
+
+
+breakpoint()
+
+import debugpy
+debugpy.connect(('10.130.131.25',35759))
+
+
+'LD_PRELOAD': '/usr/lib/x86_64-linux-gnu/libstdc++.so.6',
+
+
