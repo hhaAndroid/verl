@@ -10,7 +10,7 @@ Last updated: 06/17/2025.
 
 Atlas 200T A2 Box16
 
-Atlas 800T A2
+Atlas 900 A2 PODc
 
 
 安装
@@ -47,7 +47,7 @@ vllm & vllm-ascend
     # for Atlas 200T A2 Box16
     VLLM_TARGET_DEVICE=empty pip install -e . --extra-index https://download.pytorch.org/whl/cpu/
     
-    # for Atlas 800T A2
+    # for Atlas 900 A2 PODc
     VLLM_TARGET_DEVICE=empty pip install -e .
 
 .. code-block:: bash
@@ -143,7 +143,7 @@ vllm & vllm-ascend
         actor_rollout_ref.ref.fsdp_config.param_offload=True \
         algorithm.kl_ctrl.kl_coef=0.001 \
         trainer.critic_warmup=0 \
-        trainer.logger=['console'] \
+        trainer.logger=console \
         trainer.project_name='verl_grpo_example_gsm8k' \
         trainer.experiment_name='qwen2_7b_function_rm' \
         trainer.n_gpus_per_node=8 \
@@ -172,7 +172,8 @@ vllm & vllm-ascend
 +-----------+-------------------------+-------------+-------------------+----------------------+
 |   DAPO    | Qwen2.5-7B-instruct     |    3.83%    |        pending    |  Atlas 200T A2 Box16 |
 +-----------+-------------------------+-------------+-------------------+----------------------+
-
+|  SFT-PEFT | Qwen2.5-0.5B-instruct   |    0.06%    |        0.305      |  Atlas 900 A2 PODc   |
++-----------+-------------------------+-------------+-------------------+----------------------+
 
 精度对比说明
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
