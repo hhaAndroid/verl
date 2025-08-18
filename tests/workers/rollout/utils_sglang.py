@@ -158,6 +158,10 @@ def get_rollout_config(
             "prompt_length": max_prompt_length,
             "response_length": max_response_length,
             "tensor_model_parallel_size": tensor_parallel_size,
+            # set to 128MB only for testing
+            "update_weights_bucket_megabytes": 128,
+            # do not drop any samples in the test
+            "over_sample_rate": 0.0,
             "multi_turn": {
                 "max_assistant_turns": 4,
                 "max_user_turns": 4,
@@ -167,6 +171,7 @@ def get_rollout_config(
                 "use_inference_chat_template": False,
                 "tokenization_sanity_check_mode": "strict",
             },
+            "calculate_log_probs": False,
             "max_model_len": None,
             **sampling_params,
         }
