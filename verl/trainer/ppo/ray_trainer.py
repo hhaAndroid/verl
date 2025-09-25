@@ -179,13 +179,13 @@ def compute_response_mask(data: DataProto):
 
 
 def compute_advantage(
-    data: DataProto,
-    adv_estimator: AdvantageEstimator,
-    gamma: float = 1.0,
-    lam: float = 1.0,
-    num_repeat: int = 1,
-    norm_adv_by_std_in_grpo: bool = True,
-    config: Optional[AlgoConfig] = None,
+        data: DataProto,
+        adv_estimator: AdvantageEstimator,
+        gamma: float = 1.0,
+        lam: float = 1.0,
+        num_repeat: int = 1,
+        norm_adv_by_std_in_grpo: bool = True,
+        config: Optional[AlgoConfig] = None,
 ) -> DataProto:
     """Compute advantage estimates for policy optimization.
 
@@ -269,20 +269,20 @@ class RayPPOTrainer:
     # TODO: support each role have individual ray_worker_group_cls,
     # i.e., support different backend of different role
     def __init__(
-        self,
-        config,
-        tokenizer,
-        role_worker_mapping: dict[Role, WorkerType],
-        resource_pool_manager: ResourcePoolManager,
-        ray_worker_group_cls: type[RayWorkerGroup] = RayWorkerGroup,
-        processor=None,
-        reward_fn=None,
-        val_reward_fn=None,
-        train_dataset: Optional[Dataset] = None,
-        val_dataset: Optional[Dataset] = None,
-        collate_fn=None,
-        train_sampler: Optional[Sampler] = None,
-        device_name=None,
+            self,
+            config,
+            tokenizer,
+            role_worker_mapping: dict[Role, WorkerType],
+            resource_pool_manager: ResourcePoolManager,
+            ray_worker_group_cls: type[RayWorkerGroup] = RayWorkerGroup,
+            processor=None,
+            reward_fn=None,
+            val_reward_fn=None,
+            train_dataset: Optional[Dataset] = None,
+            val_dataset: Optional[Dataset] = None,
+            collate_fn=None,
+            train_sampler: Optional[Sampler] = None,
+            device_name=None,
     ):
         """
         Initialize distributed PPO trainer with Ray backend.
@@ -423,7 +423,7 @@ class RayPPOTrainer:
             "input": inputs,
             "output": outputs,
             "gts": gts,
-            "score": scores,
+            "reward": scores,
             "step": [self.global_steps] * n,
         }
 
@@ -431,10 +431,33 @@ class RayPPOTrainer:
             if len(v) == n:
                 base_data[k] = v
 
+        rewards = torch.tensor(scores).float()
+        response_len_list = []
         lines = []
         for i in range(n):
             entry = {k: v[i] for k, v in base_data.items()}
-            lines.append(json.dumps(entry, ensure_ascii=False))
+
+            outputs = entry["output"]
+            response_ids = self.tokenizer.encode(outputs, add_special_tokens=False)
+            response_length = len(response_ids)
+            entry["response_length"] = response_length
+            response_len_list.append(response_length)
+
+            lines.append(json.dumps(entry, ensure_ascii=False, indent=2))
+
+        response_lens = torch.tensor(response_len_list).float()
+        item = {
+            "reward_mean": rewards.mean().item(),
+            "reward_std": rewards.std().item(),
+            "reward_max": rewards.max().item(),
+            "reward_min": rewards.min().item(),
+            "response_len_mean": response_lens.mean().item(),
+            "response_len_std": response_lens.std().item(),
+            "response_len_max": response_lens.max().item(),
+            "response_len_min": response_lens.min().item(),
+            "total_len": len(rewards),
+        }
+        lines.insert(0, json.dumps(item, ensure_ascii=False, indent=2))
 
         with open(filename, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -607,9 +630,9 @@ class RayPPOTrainer:
                 n_max = max([int(name.split("@")[-1].split("/")[0]) for name in metric2val.keys()])
                 for metric_name, metric_val in metric2val.items():
                     if (
-                        (var_name == core_var)
-                        and any(metric_name.startswith(pfx) for pfx in ["mean", "maj", "best"])
-                        and (f"@{n_max}" in metric_name)
+                            (var_name == core_var)
+                            and any(metric_name.startswith(pfx) for pfx in ["mean", "maj", "best"])
+                            and (f"@{n_max}" in metric_name)
                     ):
                         metric_sec = "val-core"
                     else:
@@ -686,8 +709,8 @@ class RayPPOTrainer:
             # Only require nsight worker options when tool is nsys
             if OmegaConf.select(self.config.global_profiler, "tool") == "nsys":
                 assert (
-                    OmegaConf.select(self.config.global_profiler.global_tool_config.nsys, "worker_nsight_options")
-                    is not None
+                        OmegaConf.select(self.config.global_profiler.global_tool_config.nsys, "worker_nsight_options")
+                        is not None
                 ), "worker_nsight_options must be set when using nsys with profile_steps"
                 wg_kwargs["worker_nsight_options"] = OmegaConf.to_container(
                     OmegaConf.select(self.config.global_profiler.global_tool_config.nsys, "worker_nsight_options")
@@ -1105,7 +1128,12 @@ class RayPPOTrainer:
                         with marked_timer("update_actor", timing_raw, color="red"):
                             batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
                             actor_output = self.actor_rollout_wg.update_actor(batch)
+
+                        grad_norm = actor_output.meta_info["metrics"]['actor/grad_norm']
+                        max_ratio = actor_output.meta_info["metrics"].pop('actor/max_ratio_list')
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
+                        metrics.update({"grad_norm_list": grad_norm})
+                        metrics.update({"max_ratio_list": max_ratio})
                         metrics.update(actor_output_metrics)
 
                     # Log rollout generations if enabled
@@ -1137,9 +1165,9 @@ class RayPPOTrainer:
 
                 # validate
                 if (
-                    self.val_reward_fn is not None
-                    and self.config.trainer.test_freq > 0
-                    and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0)
+                        self.val_reward_fn is not None
+                        and self.config.trainer.test_freq > 0
+                        and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0)
                 ):
                     with marked_timer("testing", timing_raw, color="green"):
                         val_metrics: dict = self._validate()
@@ -1160,7 +1188,7 @@ class RayPPOTrainer:
                 # 3. The current step number is a multiple of the save frequency.
                 # 4. The ESI(Elastic Server Instance)/training plan is close to expiration.
                 if self.config.trainer.save_freq > 0 and (
-                    is_last_step or self.global_steps % self.config.trainer.save_freq == 0 or esi_close_to_expiration
+                        is_last_step or self.global_steps % self.config.trainer.save_freq == 0 or esi_close_to_expiration
                 ):
                     if esi_close_to_expiration:
                         print("Force saving checkpoint: ESI instance expiration approaching.")
@@ -1203,14 +1231,18 @@ class RayPPOTrainer:
                     self.train_dataloader.sampler.update(batch=batch)
 
                 # TODO: make a canonical logger that supports various backend
+                print(f"[{self.global_steps}]grad_norm: {metrics['grad_norm_list']}", flush=True)
+                max_ratio_list = metrics['max_ratio_list']
+                for max_ratio in max_ratio_list:
+                    print(f"[{self.global_steps}]max_ratios: {max_ratio}", flush=True)
                 logger.log(data=metrics, step=self.global_steps)
 
                 progress_bar.update(1)
                 self.global_steps += 1
 
                 if (
-                    hasattr(self.config.actor_rollout_ref.actor, "profiler")
-                    and self.config.actor_rollout_ref.actor.profiler.tool == "torch_memory"
+                        hasattr(self.config.actor_rollout_ref.actor, "profiler")
+                        and self.config.actor_rollout_ref.actor.profiler.tool == "torch_memory"
                 ):
                     self.actor_rollout_wg.dump_memory_snapshot(
                         tag=f"post_update_step{self.global_steps}", sub_dir=f"step{self.global_steps}"

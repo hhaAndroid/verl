@@ -810,7 +810,9 @@ def compute_policy_loss(
     pg_losses = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
     pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
-    return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower
+    ratio = (log_prob - old_log_prob.detach()).exp()
+    max_ratio = ratio.max(dim=1)
+    return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower, max_ratio
 
 
 @register_policy_loss("vanilla")
@@ -899,7 +901,10 @@ def compute_policy_loss_vanilla(
 
     pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
-    return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower
+    ratio = (log_prob - old_log_prob.detach()).exp()
+    max_ratio = ratio.max()
+
+    return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower, max_ratio
 
 
 @register_policy_loss("gspo")
