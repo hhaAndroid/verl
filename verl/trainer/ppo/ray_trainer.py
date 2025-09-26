@@ -414,7 +414,7 @@ class RayPPOTrainer:
         except Exception as e:
             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
 
-    def _dump_generations(self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path):
+    def _dump_generations(self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path, adv=None, uid=None):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
         filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
@@ -427,6 +427,11 @@ class RayPPOTrainer:
             "reward": scores,
             "step": [self.global_steps] * n,
         }
+
+        if adv is not None:
+            base_data['adv'] = adv
+        if uid is not None:
+            base_data['uid'] = uid
 
         for k, v in reward_extra_infos_dict.items():
             if len(v) == n:
@@ -464,38 +469,6 @@ class RayPPOTrainer:
             f.write("\n".join(lines) + "\n")
 
         print(f"Dumped generations to {filename}")
-
-    def _log_rollout_data(
-        self, batch: DataProto, reward_extra_infos_dict: dict, timing_raw: dict, rollout_data_dir: str
-    ):
-        """Log rollout data to disk.
-        Args:
-            batch (DataProto): The batch containing rollout data
-            reward_extra_infos_dict (dict): Additional reward information to log
-            timing_raw (dict): Timing information for profiling
-            rollout_data_dir (str): Directory path to save the rollout data
-        """
-        with marked_timer("dump_rollout_generations", timing_raw, color="green"):
-            inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
-            outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
-            scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
-            sample_gts = [item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None) for item in batch]
-
-            reward_extra_infos_to_dump = reward_extra_infos_dict.copy()
-            if "request_id" in batch.non_tensor_batch:
-                reward_extra_infos_dict.setdefault(
-                    "request_id",
-                    batch.non_tensor_batch["request_id"].tolist(),
-                )
-
-            self._dump_generations(
-                inputs=inputs,
-                outputs=outputs,
-                gts=sample_gts,
-                scores=scores,
-                reward_extra_infos_dict=reward_extra_infos_to_dump,
-                dump_path=rollout_data_dir,
-            )
 
     def _maybe_log_val_generations(self, inputs, outputs, scores):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
@@ -1169,7 +1142,36 @@ class RayPPOTrainer:
                     # Log rollout generations if enabled
                     rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
                     if rollout_data_dir:
-                        self._log_rollout_data(batch, reward_extra_infos_dict, timing_raw, rollout_data_dir)
+                        with marked_timer("dump_rollout_generations", timing_raw, color="green"):
+                            inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
+                            outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
+                            scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
+                            sample_gts = [
+                                item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None)
+                                for item in batch
+                            ]
+
+                            if "request_id" in batch.non_tensor_batch:
+                                reward_extra_infos_dict.setdefault(
+                                    "request_id",
+                                    batch.non_tensor_batch["request_id"].tolist(),
+                                )
+                            advantage = batch.batch["advantages"]
+                            advantage_list = []
+                            for adv in advantage:
+                                adv_sum = adv.unique().sum()
+                                advantage_list.append(adv_sum.item())
+                            uid = batch.non_tensor_batch["uid"].tolist()
+                            self._dump_generations(
+                                inputs=inputs,
+                                outputs=outputs,
+                                gts=sample_gts,
+                                scores=scores,
+                                reward_extra_infos_dict=reward_extra_infos_dict,
+                                dump_path=rollout_data_dir,
+                                adv=advantage_list,
+                                uid=uid
+                            )
 
                 # validate
                 if (
