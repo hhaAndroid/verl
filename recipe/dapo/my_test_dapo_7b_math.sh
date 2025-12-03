@@ -70,6 +70,10 @@ if [ ! -d "$exp_name" ]; then
 fi
 
 
+#     trainer.rollout_data_dir='outputs/dapo_train_results_test' \
+#    trainer.validation_data_dir='outputs/dapo_val_results_test' \
+
+
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${TEST_FILE}" \
@@ -144,6 +148,4 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.resume_mode=auto \
     trainer.log_val_generations=10 \
-    trainer.rollout_data_dir='outputs/dapo_train_results_test' \
-    trainer.validation_data_dir='outputs/dapo_val_results_test' \
     2>&1 | tee -a "${exp_name}/training_log_${current_time}.txt"
