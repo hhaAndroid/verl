@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
+ray stop --force
+
+source /mnt/shared-storage-user/huanghaian/.bashrc
+source /mnt/shared-storage-user/huanghaian/proxy_off
+conda activate verl_new
+cd /mnt/shared-storage-user/huanghaian/code/verl
+
+export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+
 project_name='DAPO'
 exp_name='DAPO-Qwen2.5-7b-MATH-0527a1'
 
@@ -30,7 +39,7 @@ train_prompt_mini_bsz=32
 # RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 # WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 # RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
-NNODES=${NNODES:-8}
+NNODES=${NNODES:-1}
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
@@ -54,10 +63,6 @@ infer_ppo_max_token_len=$(((max_prompt_length + max_response_length) * 3))
 offload=True
 gen_tp=4
 fsdp_size=32
-
-# reference run wandb: https://wandb.ai/verl-org/DAPO%20Reproduction%20on%20verl/runs/ow47vvon?nw=nwusertongyuxuan361
-
-ray stop --force
 
 current_time=$(date "+%m%d%H%M")
 if [ ! -d "$exp_name" ]; then
@@ -126,7 +131,7 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     +reward_model.reward_kwargs.overlong_buffer_cfg.penalty_factor=${overlong_penalty_factor} \
     +reward_model.reward_kwargs.overlong_buffer_cfg.log=False \
     +reward_model.reward_kwargs.max_resp_len=${max_response_length} \
-    trainer.logger='["console","wandb"]' \
+    trainer.logger='["console"]' \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node="${NGPUS_PER_NODE}" \
@@ -139,4 +144,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.resume_mode=auto \
     trainer.log_val_generations=10 \
-    2>&1 | tee -a "${WORK_DIR}/training_log_${current_time}.txt"
+    trainer.rollout_data_dir='outputs/dapo_train_results_test' \
+    trainer.validation_data_dir='outputs/dapo_val_results_test' \
+    2>&1 | tee -a "${exp_name}/training_log_${current_time}.txt"
