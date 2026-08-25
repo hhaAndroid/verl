@@ -1,0 +1,26 @@
+{
+  "folders": [
+    {
+      "name": "dsv4_sft_standalone",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "/mnt/shared-storage-user/huanghaian/miniconda3/envs/dsv4_sft_bridge/bin/python",
+    "python.analysis.extraPaths": [
+      "${workspaceFolder}/third_party/Megatron-Bridge/src",
+      "${workspaceFolder}/third_party/Megatron-LM",
+      "${workspaceFolder}/third_party/FlashMLA",
+      "${workspaceFolder}/third_party/cudnn-frontend/python"
+    ],
+    "python.analysis.indexing": true,
+    "python.analysis.packageIndexDepths": [
+      {
+        "name": "megatron",
+        "depth": 12,
+        "includeAllSymbols": true
+      }
+    ],
+    "python.analysis.autoImportCompletions": true
+  }
+}

@@ -1,0 +1,40 @@
+conda activate verl_0727
+export CUDA_HOME=/mnt/shared-storage-user/llmrazor-share/cuda/13.0
+export CUDACXX=$CUDA_HOME/bin/nvcc
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+
+python -m pip install -U pip setuptools wheel packaging ninja pybind11
+pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
+    --index-url https://download.pytorch.org/whl/cu130
+pip install nvidia-mathdx "nvidia-cudnn-cu13>=9" "nvidia-nccl-cu13>=2.29.7,<3.0"
+
+pip install -r requirements.txt
+pip install cachetools pytest-asyncio nvtx matplotlib qwen-vl-utils==0.0.14
+pip install torchcodec --index-url https://download.pytorch.org/whl/cu130
+pip install transformers==5.3.0 mathruler
+
+MAX_JOBS=32 FLASH_ATTENTION_FORCE_BUILD=TRUE \
+    pip install --no-build-isolation flash_attn==2.8.3
+
+git clone https://github.com/vllm-project/vllm.git
+cd /mnt/shared-storage-user/huanghaian/code/vllm
+git checkout v0.23.0
+curl -fsSL https://github.com/vllm-project/vllm/pull/44483.diff -o /tmp/vllm-pr-44483.diff
+git apply --3way --whitespace=nowarn /tmp/vllm-pr-44483.diff
+curl -fsSL https://github.com/vllm-project/vllm/pull/45589.diff -o /tmp/vllm-pr-45589.diff
+git apply --3way --whitespace=nowarn /tmp/vllm-pr-45589.diff
+
+python use_existing_torch.py
+pip install -r requirements/build/cuda.txt
+MAX_JOBS=32 pip install --no-build-isolation -e .
+
+cd /mnt/shared-storage-user/huanghaian/code/verl
+pip install --no-deps -e .
+
+
+cd /mnt/shared-storage-user/llmrazor-share/xtuner_extra_cpp_library
+./build_libs causal-conv1d
+
+
+

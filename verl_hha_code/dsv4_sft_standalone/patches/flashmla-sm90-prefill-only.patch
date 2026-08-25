@@ -1,0 +1,219 @@
+diff --git a/csrc/api/api.cpp b/csrc/api/api.cpp
+index 86dd116..4ae1b67 100644
+--- a/csrc/api/api.cpp
++++ b/csrc/api/api.cpp
+@@ -2,14 +2,18 @@
+ #include <pybind11/stl.h>
+ 
+ #include "sparse_fwd.h"
++#ifndef FLASH_MLA_SM90_PREFILL_ONLY
+ #include "sparse_decode.h"
+ #include "dense_decode.h"
+ #include "dense_fwd.h"
++#endif
+ 
+ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+     m.doc() = "FlashMLA";
++#ifndef FLASH_MLA_SM90_PREFILL_ONLY
+     m.def("sparse_decode_fwd", &sparse_attn_decode_interface);
+     m.def("dense_decode_fwd", &dense_attn_decode_interface);
++#endif
+     m.def(
+         "sparse_prefill_fwd",
+         &sparse_attn_prefill_interface,
+@@ -22,6 +26,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+         pybind11::arg("topk_length"),
+         pybind11::arg("indexer_topk") = 0
+     );
++#ifndef FLASH_MLA_SM90_PREFILL_ONLY
+     m.def("dense_prefill_fwd", &FMHACutlassSM100FwdRun);
+     m.def("dense_prefill_bwd", &FMHACutlassSM100BwdRun);
++#endif
+ }
+diff --git a/csrc/api/sparse_fwd.h b/csrc/api/sparse_fwd.h
+index 223bd21..bf91218 100644
+--- a/csrc/api/sparse_fwd.h
++++ b/csrc/api/sparse_fwd.h
+@@ -5,9 +5,11 @@
+ #include "params.h"
+ 
+ #include "sm90/prefill/sparse/phase1.h"
++#ifndef FLASH_MLA_SM90_PREFILL_ONLY
+ #include "sm100/prefill/sparse/fwd/head128/phase1.h"
+ #include "sm100/prefill/sparse/fwd/head64/phase1.h"
+ #include "sm100/prefill/sparse/fwd_for_small_topk/head128/phase1.h"
++#endif
+ 
+ enum class FwdFeatures : int {
+     HEAD_64,
+@@ -57,6 +59,7 @@ protected:
+     }
+ };
+ 
++#ifndef FLASH_MLA_SM90_PREFILL_ONLY
+ class Fwd_Sm100_Head64_Impl : public FwdImplBase {
+     DECLARE_SUPPORTED_FEATURES(
+         FwdFeatures::HEAD_64,
+@@ -123,6 +126,7 @@ protected:
+         }
+     }
+ };
++#endif
+ 
+ static std::vector<at::Tensor> sparse_attn_prefill_interface(
+     const at::Tensor &q,
+@@ -138,8 +142,12 @@ static std::vector<at::Tensor> sparse_attn_prefill_interface(
+     
+     Arch arch = Arch();
+     bool is_sm90a = arch.is_sm90a();
++#ifndef FLASH_MLA_SM90_PREFILL_ONLY
+     bool is_sm100f = arch.is_sm100f();
+     TORCH_CHECK(is_sm90a || is_sm100f, "Sparse Attention Forward Kernel is only supported on SM90a and SM100f architectures.");
++#else
++    TORCH_CHECK(is_sm90a, "This H200-only FlashMLA build supports SM90a sparse prefill only.");
++#endif
+ 
+     KU_CHECK_NDIM(q, 3);
+     KU_CHECK_NDIM(kv, 3);
+@@ -253,7 +261,9 @@ static std::vector<at::Tensor> sparse_attn_prefill_interface(
+     if (is_sm90a) {
+         Fwd_Sm90_Impl fwd_impl;
+         fwd_impl.run(params, required_features);
+-    } else if (is_sm100f) {
++    }
++#ifndef FLASH_MLA_SM90_PREFILL_ONLY
++    else if (is_sm100f) {
+         if (h_q == 64) {
+             Fwd_Sm100_Head64_Impl fwd_impl;
+             fwd_impl.run(params, required_features);
+@@ -278,6 +288,7 @@ static std::vector<at::Tensor> sparse_attn_prefill_interface(
+     } else {
+         TORCH_CHECK(false, "Unsupported architecture");
+     }
++#endif
+ 
+     if (indexer_topk > 0) {
+         return {out, max_logits, lse, lse_indexer};
+diff --git a/setup.py b/setup.py
+index 8ac44e1..cb54946 100644
+--- a/setup.py
++++ b/setup.py
+@@ -20,6 +20,11 @@ def get_features_args():
+     features_args = []
+     if is_flag_set("FLASH_MLA_DISABLE_FP16"):
+         features_args.append("-DFLASH_MLA_DISABLE_FP16")
++    if is_flag_set("FLASH_MLA_DISABLE_SM100"):
++        # CUDA 12.8 cannot compile the Blackwell sources.  The upstream flag
++        # currently removes only the SM100 gencode entry, so also expose a C++
++        # guard used by the H200-only source list below.
++        features_args.append("-DFLASH_MLA_SM90_PREFILL_ONLY")
+     return features_args
+ 
+ def get_arch_flags():
+@@ -58,52 +63,64 @@ if IS_WINDOWS:
+ else:
+     cxx_args = ["-O3", "-std=c++20", "-DNDEBUG", "-Wno-deprecated-declarations"]
+ 
++common_sources = [
++    "csrc/api/api.cpp",
++]
++
++sm90_prefill_sources = [
++    "csrc/sm90/prefill/sparse/fwd.cu",
++    "csrc/sm90/prefill/sparse/instantiations/phase1_k512.cu",
++    "csrc/sm90/prefill/sparse/instantiations/phase1_k512_topklen.cu",
++    "csrc/sm90/prefill/sparse/instantiations/phase1_k576.cu",
++    "csrc/sm90/prefill/sparse/instantiations/phase1_k576_topklen.cu",
++]
++
++full_sources = [
++    # Misc kernels for decoding
++    "csrc/smxx/decode/get_decoding_sched_meta/get_decoding_sched_meta.cu",
++    "csrc/smxx/decode/combine/combine.cu",
++
++    # sm90 dense decode
++    "csrc/sm90/decode/dense/instantiations/fp16.cu",
++    "csrc/sm90/decode/dense/instantiations/bf16.cu",
++
++    # sm90 sparse decode
++    "csrc/sm90/decode/sparse_fp8/instantiations/model1_persistent_h64.cu",
++    "csrc/sm90/decode/sparse_fp8/instantiations/model1_persistent_h128.cu",
++    "csrc/sm90/decode/sparse_fp8/instantiations/v32_persistent_h64.cu",
++    "csrc/sm90/decode/sparse_fp8/instantiations/v32_persistent_h128.cu",
++
++    # sm100 dense prefill & backward
++    "csrc/sm100/prefill/dense/fmha_cutlass_fwd_sm100.cu",
++    "csrc/sm100/prefill/dense/fmha_cutlass_bwd_sm100.cu",
++
++    # sm100 sparse prefill
++    "csrc/sm100/prefill/sparse/fwd/head64/instantiations/phase1_k512.cu",
++    "csrc/sm100/prefill/sparse/fwd/head64/instantiations/phase1_k576.cu",
++    "csrc/sm100/prefill/sparse/fwd/head128/instantiations/phase1_k512.cu",
++    "csrc/sm100/prefill/sparse/fwd/head128/instantiations/phase1_k576.cu",
++    "csrc/sm100/prefill/sparse/fwd_for_small_topk/head128/instantiations/phase1_prefill_k512.cu",
++
++    # sm100 sparse decode
++    "csrc/sm100/decode/head64/instantiations/v32.cu",
++    "csrc/sm100/decode/head64/instantiations/model1.cu",
++    "csrc/sm100/decode/sparse_fp8_smallbatch/splitkv_mla.cu",
++    "csrc/sm100/prefill/sparse/fwd_for_small_topk/head128/instantiations/phase1_decode_k512.cu",
++]
++
++if is_flag_set("FLASH_MLA_DISABLE_SM100"):
++    # Megatron's DSv4 training integration only imports sparse_prefill_fwd.
++    # Build exactly that SM90 surface on CUDA 12.8 and avoid compiling any
++    # Blackwell translation units.
++    extension_sources = common_sources + sm90_prefill_sources
++else:
++    extension_sources = common_sources + sm90_prefill_sources + full_sources
++
+ ext_modules = []
+ ext_modules.append(
+     CUDAExtension(
+         name="flash_mla.cuda",
+-        sources=[
+-            # API
+-            "csrc/api/api.cpp",
+-
+-            # Misc kernels for decoding
+-            "csrc/smxx/decode/get_decoding_sched_meta/get_decoding_sched_meta.cu",
+-            "csrc/smxx/decode/combine/combine.cu",
+-
+-            # sm90 dense decode
+-            "csrc/sm90/decode/dense/instantiations/fp16.cu",
+-            "csrc/sm90/decode/dense/instantiations/bf16.cu",
+-
+-            # sm90 sparse decode
+-            "csrc/sm90/decode/sparse_fp8/instantiations/model1_persistent_h64.cu",
+-            "csrc/sm90/decode/sparse_fp8/instantiations/model1_persistent_h128.cu",
+-            "csrc/sm90/decode/sparse_fp8/instantiations/v32_persistent_h64.cu",
+-            "csrc/sm90/decode/sparse_fp8/instantiations/v32_persistent_h128.cu",
+-
+-            # sm90 sparse prefill
+-            "csrc/sm90/prefill/sparse/fwd.cu",
+-            "csrc/sm90/prefill/sparse/instantiations/phase1_k512.cu",
+-            "csrc/sm90/prefill/sparse/instantiations/phase1_k512_topklen.cu",
+-            "csrc/sm90/prefill/sparse/instantiations/phase1_k576.cu",
+-            "csrc/sm90/prefill/sparse/instantiations/phase1_k576_topklen.cu",
+-
+-            # sm100 dense prefill & backward
+-            "csrc/sm100/prefill/dense/fmha_cutlass_fwd_sm100.cu",
+-            "csrc/sm100/prefill/dense/fmha_cutlass_bwd_sm100.cu",
+-
+-            # sm100 sparse prefill
+-            "csrc/sm100/prefill/sparse/fwd/head64/instantiations/phase1_k512.cu",
+-            "csrc/sm100/prefill/sparse/fwd/head64/instantiations/phase1_k576.cu",
+-            "csrc/sm100/prefill/sparse/fwd/head128/instantiations/phase1_k512.cu",
+-            "csrc/sm100/prefill/sparse/fwd/head128/instantiations/phase1_k576.cu",
+-            "csrc/sm100/prefill/sparse/fwd_for_small_topk/head128/instantiations/phase1_prefill_k512.cu",
+-
+-            # sm100 sparse decode
+-            "csrc/sm100/decode/head64/instantiations/v32.cu",
+-            "csrc/sm100/decode/head64/instantiations/model1.cu",
+-            "csrc/sm100/decode/sparse_fp8_smallbatch/splitkv_mla.cu",
+-            "csrc/sm100/prefill/sparse/fwd_for_small_topk/head128/instantiations/phase1_decode_k512.cu",
+-        ],
++        sources=extension_sources,
+         extra_compile_args={
+             "cxx": cxx_args + get_features_args(),
+             "nvcc": [

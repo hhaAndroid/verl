@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONDA_ROOT="${CONDA_ROOT:-/mnt/shared-storage-user/huanghaian/miniconda3}"
+PYTHON="${CONDA_ROOT}/envs/dsv4_sft_bridge/bin/python"
+
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+export PYTHONUNBUFFERED=1
+export PYTHONPATH="${PROJECT_DIR}/third_party/Megatron-LM:${PROJECT_DIR}/third_party/Megatron-Bridge/src${PYTHONPATH:+:${PYTHONPATH}}"
+
+"${PYTHON}" -m torch.distributed.run --standalone --nproc-per-node=8 \
+  "${PROJECT_DIR}/trace_dsv4_forward.py" \
+  --mode "${MODE:-cp1}" \
+  --num-layers "${NUM_LAYERS:-2}" \
+  "$@"

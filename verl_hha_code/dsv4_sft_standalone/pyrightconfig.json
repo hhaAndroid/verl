@@ -1,0 +1,19 @@
+{
+  "venvPath": "/mnt/shared-storage-user/huanghaian/miniconda3/envs",
+  "venv": "dsv4_sft_bridge",
+  "extraPaths": [
+    "third_party/Megatron-Bridge/src",
+    "third_party/Megatron-LM",
+    "third_party/FlashMLA",
+    "third_party/cudnn-frontend/python"
+  ],
+  "include": [
+    "train_dsv4_sft.py",
+    "train_dsv4_dynamic_cp_sft.py",
+    "trace_dsv4_forward.py",
+    "verify_fused_dsa_sm90.py",
+    "check_environment.py"
+  ],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux"
+}
