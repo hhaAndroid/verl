@@ -45,7 +45,6 @@ actor_rollout_ref:
     megatron:
       _target_: verl.workers.config.McoreEngineConfig
       param_offload: false
-      grad_offload: false
       optimizer_offload: false
       tensor_model_parallel_size: 1
       expert_model_parallel_size: 1
@@ -253,7 +252,6 @@ actor_rollout_ref:
     megatron:
       _target_: verl.workers.config.McoreEngineConfig
       param_offload: ${oc.select:actor_rollout_ref.actor.megatron.param_offload,False}
-      grad_offload: false
       optimizer_offload: false
       tensor_model_parallel_size: ${oc.select:actor_rollout_ref.actor.megatron.tensor_model_parallel_size,1}
       expert_model_parallel_size: ${oc.select:actor_rollout_ref.actor.megatron.expert_model_parallel_size,1}
@@ -355,6 +353,7 @@ actor_rollout_ref:
       temperature: 0
       'n': 1
       do_sample: false
+    router_config_path: null
     multi_turn:
       _target_: verl.workers.config.MultiTurnConfig
       enable: false
@@ -586,7 +585,6 @@ critic:
   megatron:
     _target_: verl.workers.config.McoreEngineConfig
     param_offload: false
-    grad_offload: false
     optimizer_offload: false
     tensor_model_parallel_size: 1
     expert_model_parallel_size: 1
@@ -999,6 +997,7 @@ trainer:
   esi_redundant_time: 0
   resume_mode: auto
   resume_from_path: null
+  checkpoint_callback_class: null
   val_before_train: true
   val_only: false
   test_freq: -1

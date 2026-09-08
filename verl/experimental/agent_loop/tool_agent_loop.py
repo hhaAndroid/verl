@@ -120,8 +120,12 @@ class ToolAgentLoop(AgentLoopBase):
         self.prompt_length = self.rollout_config.prompt_length
         self.response_length = self.rollout_config.response_length
 
+    @staticmethod
+    def _make_request_id(priority: int, full_determinism: bool) -> str:
+        return f"det-{priority}" if full_determinism else uuid4().hex
+
     @rollout_trace_op
-    async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
+    async def run(self, sampling_params: dict[str, Any], priority: int = 0, **kwargs) -> AgentLoopOutput:
         messages = list(kwargs["raw_prompt"])
 
         # extract multimodal inputs from messages
@@ -132,7 +136,7 @@ class ToolAgentLoop(AgentLoopBase):
         mm_processor_kwargs = self._get_mm_processor_kwargs(audios)
 
         metrics = {}
-        request_id = uuid4().hex
+        request_id = self._make_request_id(priority, self.rollout_config.full_determinism)
         tools_kwargs = kwargs.get("tools_kwargs", {})
 
         agent_data = AgentData(
@@ -371,7 +375,7 @@ class ToolAgentLoop(AgentLoopBase):
         agent_data.messages.extend(add_messages)
 
         schemas = getattr(agent_data, "_active_tool_schemas", self.tool_schemas)
-        merge_result, response_mask, response_logprobs = await self.ct_merge_non_assistant_msg(
+        merge_result, response_mask, response_logprobs = await self.ct_merge_context_msg(
             previous_messages,
             agent_data.messages,
             agent_data.prompt_ids,
