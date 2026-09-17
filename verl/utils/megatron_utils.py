@@ -16,7 +16,6 @@
 # limitations under the License.
 """Pretrain utilities."""
 
-import gc
 import inspect
 import logging
 import os
@@ -251,27 +250,50 @@ def get_model(
     return model
 
 
-_HF_CONFIG_CHILD_NAMES = ("text_config", "thinker_config", "model_config", "language_config")
+_HF_CONFIG_CHILD_NAMES = ("text_config", "language_config", "thinker_config", "model_config")
+
+
+def _get_hf_text_config(hf_config: PretrainedConfig):
+    get_text_config = getattr(hf_config, "get_text_config", None)
+    if callable(get_text_config):
+        text_config = get_text_config()
+        if text_config is not None:
+            return text_config
+    return getattr(hf_config, "text_config", None)
 
 
 def _iter_hf_config_tree(hf_config: PretrainedConfig):
-    config_queue = [hf_config]
     seen = set()
-    while config_queue:
-        config = config_queue.pop(0)
+
+    def _visit(config):
         if id(config) in seen:
-            continue
+            return
         seen.add(id(config))
-        yield config
+
+        # Visit the canonical text config and known language-model wrappers before
+        # the composite root. Never walk arbitrary sub_configs: audio/code2wav
+        # siblings can expose conflicting model attributes.
+        text_config = _get_hf_text_config(config)
+        if text_config is not None and text_config is not config:
+            yield from _visit(text_config)
 
         for child_name in _HF_CONFIG_CHILD_NAMES:
             child_config = getattr(config, child_name, None)
-            if child_config is not None:
-                config_queue.append(child_config)
+            if child_config is not None and child_config is not text_config:
+                yield from _visit(child_config)
+        yield config
+
+    yield from _visit(hf_config)
 
 
 def get_hf_config_attr(hf_config: PretrainedConfig, attr_name: str) -> Any:
     """Find an attribute in a nested Hugging Face model configuration."""
+    text_config = _get_hf_text_config(hf_config)
+    if text_config is not None:
+        value = getattr(text_config, attr_name, None)
+        if value is not None:
+            return value
+
     for config in _iter_hf_config_tree(hf_config):
         value = getattr(config, attr_name, None)
         if value is not None:
@@ -773,7 +795,6 @@ def offload_megatron_model_to_cpu(models):
         if cleared:
             logger.debug("Cleared %d TE FP8 weight workspaces on offload", cleared)
 
-    gc.collect()
     get_torch_device().empty_cache()
 
 
@@ -821,7 +842,6 @@ def load_megatron_model_to_gpu(models, load_grad=True, load_frozen_params=True):
                 param.data = param.data.to(device_id, non_blocking=True)
                 if param.grad is not None:
                     param.grad = param.grad.to(device_id, non_blocking=True)
-    gc.collect()
     get_torch_device().empty_cache()
 
 
@@ -953,7 +973,6 @@ def offload_megatron_optimizer(optimizers):
         # Free Megatron-LM's global memory buffer
         get_global_memory_buffer().buffer.clear()
 
-        gc.collect()
         get_torch_device().empty_cache()
 
 
@@ -982,7 +1001,6 @@ def load_megatron_optimizer(optimizers):
                     # "master_param" when use_precision_aware_optimizer=True.
                     if "master_param" in v:
                         v["master_param"] = v["master_param"].to(get_device_id(), non_blocking=True)
-        gc.collect()
         get_torch_device().empty_cache()
 
 

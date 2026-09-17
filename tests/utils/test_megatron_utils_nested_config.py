@@ -20,13 +20,19 @@ from verl.utils.megatron_utils import get_hf_config_attr, get_hf_rope_theta
 
 
 def test_get_hf_rope_theta_from_nested_omni_text_config():
-    config = SimpleNamespace(
-        thinker_config=SimpleNamespace(
-            text_config=SimpleNamespace(rope_theta=1_000_000.0),
-        )
-    )
+    text_config = SimpleNamespace(rope_theta=1_000_000.0)
 
-    assert get_hf_rope_theta(config) == 1_000_000.0
+    class OmniConfig:
+        sub_configs = {"thinker_config": object, "code2wav_config": object}
+
+        def __init__(self):
+            self.thinker_config = SimpleNamespace(text_config=text_config)
+            self.code2wav_config = SimpleNamespace(rope_theta=10_000.0)
+
+        def get_text_config(self):
+            return text_config
+
+    assert get_hf_rope_theta(OmniConfig()) == 1_000_000.0
 
 
 def test_get_hf_rope_theta_from_nested_transformers_v5_parameters():
@@ -45,6 +51,49 @@ def test_get_hf_config_attr_handles_nested_configs_and_cycles():
     config.model_config = config
 
     assert get_hf_config_attr(config, "hidden_size") == 4096
+
+
+def test_get_hf_config_attr_uses_standard_sub_configs_and_text_accessor():
+    text_config = SimpleNamespace(hidden_size=8192)
+
+    class CompositeConfig:
+        sub_configs = {"decoder_config": object}
+
+        def __init__(self):
+            self.hidden_size = 1024
+            self.decoder_config = SimpleNamespace(hidden_size=2048)
+
+        def get_text_config(self):
+            return text_config
+
+    assert get_hf_config_attr(CompositeConfig(), "hidden_size") == 8192
+
+
+def test_get_hf_config_attr_prefers_direct_text_config_over_root():
+    config = SimpleNamespace(hidden_size=1024, text_config=SimpleNamespace(hidden_size=4096))
+
+    assert get_hf_config_attr(config, "hidden_size") == 4096
+
+
+def test_nested_config_lookup_does_not_fall_back_to_multimodal_sibling():
+    class CompositeConfig:
+        sub_configs = {"audio_config": object, "code2wav_config": object}
+
+        def __init__(self):
+            self.audio_config = SimpleNamespace(hidden_size=1024)
+            self.code2wav_config = SimpleNamespace(rope_theta=10_000.0)
+
+    with pytest.raises(AttributeError, match="has no nested hidden_size"):
+        get_hf_config_attr(CompositeConfig(), "hidden_size")
+    with pytest.raises(AttributeError, match="has no rope_theta"):
+        get_hf_rope_theta(CompositeConfig())
+
+
+def test_get_hf_config_attr_preserves_falsey_text_values():
+    config = SimpleNamespace(text_config=SimpleNamespace(flag=False, count=0))
+
+    assert get_hf_config_attr(config, "flag") is False
+    assert get_hf_config_attr(config, "count") == 0
 
 
 def test_nested_config_lookup_rejects_missing_attributes():
